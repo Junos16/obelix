@@ -1,0 +1,20 @@
+[project]
+name = "cs780-capstone-project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.4.3",
+    "opencv-python>=4.13.0.92",
+    "torch>=2.10.0",
+]
+
+[project.scripts]
+obelix = "src.main:main"
+
+[tool.uv]
+package = true
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
