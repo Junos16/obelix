@@ -38,7 +38,7 @@ def train_agent(args):
     
     if hasattr(agent_mod, "train"):
         # We expect the agent module to have a train() function
-        agent_mod.train(level=args.level, wall_obstacles=args.wall, episodes=args.episodes)
+        agent_mod.train(level=args.level, wall_obstacles=args.wall, episodes=args.episodes, config_file=args.config)
     else:
         print(f"Error: {args.agent}.py does not define a 'train' function.")
         print("Please implement 'def train(level, wall_obstacles, episodes):' in your agent file.")
@@ -86,6 +86,7 @@ def main():
     train_parser.add_argument("--level", type=int, choices=[1, 2, 3], default=1, help="Difficulty level")
     train_parser.add_argument("--wall", action="store_true", help="Enable the static wall obstacle")
     train_parser.add_argument("--episodes", type=int, default=1000, help="Number of episodes to train")
+    train_parser.add_argument("--config", type=str, default=None, help="Path to config JSON file (e.g., submissions/configs/...)")
 
     # Evaluation parser
     eval_parser = subparsers.add_parser("eval", help="Evaluate a packaged submission")

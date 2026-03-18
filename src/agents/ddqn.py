@@ -52,10 +52,52 @@ class Replay:
         return s, a, r, s2, d
     def __len__(self): return len(self.buf)
 
-def train(level: int, wall_obstacles: bool, episodes: int):
+import json
+
+def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = None):
     """
     Standardized train function called by src/main.py
     """
+    difficulty = 0 if level == 1 else 2 if level == 2 else 3
+
+    # Default hyperparameters
+    config = {
+        "gamma": 0.99,
+        "lr": 1e-3,
+        "batch_size": 256,
+        "replay_size": 100000,
+        "warmup": 2000,
+        "target_sync": 2000,
+        "eps_start": 1.0,
+        "eps_end": 0.05,
+        "eps_decay_steps": 200000,
+        "seed": 42,
+        "max_steps": 1000,
+        "scaling_factor": 5,
+        "arena_size": 500,
+        "box_speed": 2
+    }
+    
+    if config_file and os.path.exists(config_file):
+        with open(config_file, 'r') as f:
+            user_config = json.load(f)
+            config.update(user_config)
+            print(f"Loaded hyperparameters from {config_file}")
+
+    gamma = config["gamma"]
+    lr = config["lr"]
+    batch_size = config["batch_size"]
+    replay_size = config["replay_size"]
+    warmup = config["warmup"]
+    target_sync = config["target_sync"]
+    eps_start = config["eps_start"]
+    eps_end = config["eps_end"]
+    eps_decay_steps = config["eps_decay_steps"]
+    seed = config["seed"]
+    max_steps = config["max_steps"]
+    scaling_factor = config["scaling_factor"]
+    arena_size = config["arena_size"]
+    box_speed = config["box_speed"]
     difficulty = 0 if level == 1 else 2 if level == 2 else 3
 
     # Hardcoded hyperparameters from the original script

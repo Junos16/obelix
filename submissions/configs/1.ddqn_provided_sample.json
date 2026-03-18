@@ -1,0 +1,16 @@
+{
+    "gamma": 0.99,
+    "lr": 0.001,
+    "batch_size": 256,
+    "replay_size": 100000,
+    "warmup": 2000,
+    "target_sync": 2000,
+    "eps_start": 1.0,
+    "eps_end": 0.05,
+    "eps_decay_steps": 200000,
+    "seed": 42,
+    "max_steps": 1000,
+    "scaling_factor": 5,
+    "arena_size": 500,
+    "box_speed": 2
+}
