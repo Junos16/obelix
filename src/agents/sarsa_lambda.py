@@ -21,6 +21,7 @@ def obs_to_state(obs: np.ndarray) -> int:
     return np.sum(2**np.where(obs > 0)[0])
 
 def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = None):
+    print("Training SARSA-Lambda agent for level", level, "with wall obstacles", wall_obstacles, "for", episodes, "episodes")
     difficulty = 0 if level == 1 else 1 if level == 2 else 2 if level == 3 else 3
     
     # Default hyperparameters
@@ -102,7 +103,7 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
             else:
                 td_error = reward + gamma * agent.q_table[next_stateID, next_action] - agent.q_table[stateID, action]
         
-        if (episode + 1) % 50 == 0:
+        if (episode + 1) % 10 == 0:
             print(f"Episode {episode+1}/{episodes} return={episode_return:.1f} eps={epsilon:.3f} replay={len(replay)}")
     
     os.makedirs("models", exist_ok=True)
