@@ -5,7 +5,7 @@ import cv2
 
 import numpy as np
 
-from obelix import OBELIX
+from src.obelix import OBELIX
 
 import matplotlib.pyplot as plt
 

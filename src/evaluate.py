@@ -9,7 +9,7 @@ from typing import Callable, List
 
 import numpy as np
 
-from obelix import OBELIX
+from src.obelix import OBELIX
 
 
 ActionFn = Callable[[np.ndarray, np.random.Generator], str]
