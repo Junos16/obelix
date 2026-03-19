@@ -79,7 +79,7 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
         episode_return = 0.0
 
         for _ in range(config["max_steps"]):
-            next_obs, reward, done = env.step(ACTIONS[action])
+            next_obs, reward, done = env.step(ACTIONS[action], render=False)
             next_stateID = obs_to_state(next_obs)
             next_epsilon = max(config["eps_end"], config["eps_start"] - episode / config["eps_decay_episodes"])
             next_action = get_epsilon_greedy_action(next_stateID, next_epsilon)
