@@ -2,16 +2,16 @@ from __future__ import annotations
 import random
 import numpy as np
 
-from src.obelix import OBELIX
+from obelix import OBELIX
 
-ACTIONS = ["L45", "L22", "FW", "R22", "R45]
+ACTIONS = ["L45", "L22", "FW", "R22", "R45"]
 STATE_SPACE_SIZE = 2**18
 
 class SarsaLambdaAgent:
     def __init__(self, n_actions=5):
         # self.q_table = np.zeroes((STATE_SPACE_SIZE, n_actions), dtype=np.float32)
         self.q_table = np.ones((STATE_SPACE_SIZE, n_actions), dtype=np.float32) * 10
-        self.e_table = np.zeroes((STATE_SPACE_SIZE, n_actions), dtype=np.float32)
+        self.e_table = np.zeros((STATE_SPACE_SIZE, n_actions), dtype=np.float32)
 
     def reset_traces(self):
         self.e_table.fill(0.0)
@@ -77,7 +77,7 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
         episode_return = 0.0
 
         for _ in range(config["max_steps"]):
-            next_obs, reward, done, _ = env.step(ACTIONS[action])
+            next_obs, reward, done = env.step(ACTIONS[action])
             next_stateID = obs_to_state(next_obs)
             next_epsilon = max(config["eps_end"], config["eps_start"] - episode / config["eps_decay_episodes"])
             next_action = get_epsilon_greedy_action(next_stateID, next_epsilon)

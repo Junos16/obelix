@@ -3,7 +3,7 @@ import importlib.util
 import os
 import sys
 
-from src.evaluate import evaluate_agent, append_leaderboard
+from evaluate import evaluate_agent, append_leaderboard
 
 def load_agent_module(agent_name: str):
     """Dynamically loads an agent module from src/agents/ for training"""

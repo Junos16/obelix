@@ -14,7 +14,7 @@ dependencies = [
 obelix = "src.main:main"
 
 [tool.uv]
-package = true
+package = false
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
