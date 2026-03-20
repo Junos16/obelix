@@ -4,7 +4,7 @@ import os
 import sys
 
 from evaluate import evaluate_agent, append_leaderboard
-from optuna import run_sweep
+from sweeper import run_sweep
 
 def load_agent_module(agent_name: str):
     """Dynamically loads an agent module from src/agents/ for training"""

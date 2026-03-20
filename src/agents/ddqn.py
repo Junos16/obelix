@@ -92,7 +92,7 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
     target_sync = config["target_sync"]
     eps_start = config["eps_start"]
     eps_end = config["eps_end"]
-    eps_decay_steps = config["eps_decay_steps"]
+    eps_decay_steps = max(1, config["eps_decay_steps"])
     seed = config["seed"]
     max_steps = config["max_steps"]
     scaling_factor = config["scaling_factor"]
@@ -227,5 +227,5 @@ def get_optuna_params(trial, total_episodes):
     params["eps_start"] = trial.suggest_float("eps_start", 0.5, 1.0)
     params["eps_end"] = trial.suggest_float("eps_end", 0.01, 0.1)
     eps_fraction = trial.suggest_float("eps_decay_fraction", 0.4, 0.9)
-    params["eps_decay_steps"] = int(total_episodes * eps_fraction)
+    params["eps_decay_steps"] = max(1, int(total_episodes * eps_fraction))
     return params

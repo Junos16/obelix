@@ -1,5 +1,7 @@
 from __future__ import annotations
 import random
+import os
+import json
 import numpy as np
 import torch
 
@@ -31,7 +33,7 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
         "alpha": 0.1,     # Learning rate
         "eps_start": 1.0,
         "eps_end": 0.05,
-        "eps_decay_episodes": int(episodes * 0.8),
+        "eps_decay_episodes": max(1, int(episodes * 0.8)),
         "seed": 42,
         "max_steps": 1000,
         "scaling_factor": 5,
@@ -131,5 +133,5 @@ def get_optuna_params(trial, total_episodes):
     params["alpha"] = trial.suggest_float("alpha", 0.01, 0.5, log=True)
     params["lambda_"] = trial.suggest_float("lambda_", 0.5, 0.99)
     eps_fraction = trial.suggest_float("eps_decay_fraction", 0.4, 0.9)
-    params["eps_decay_episodes"] = int(total_episodes * eps_fraction)
+    params["eps_decay_episodes"] = max(1, int(total_episodes * eps_fraction))
     return params    
