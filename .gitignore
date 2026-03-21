@@ -5,6 +5,8 @@ CS780-OBELIX/
 .vscode
 submissions/configs/temp
 submissions/configs/temp/*
+models/
+models/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
