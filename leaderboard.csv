@@ -1,0 +1,2 @@
+timestamp_utc,agent_name,mean_score,std_score,runs,max_steps,scaling_factor,arena_size,wall_obstacles,difficulty,box_speed
+2026-03-21T23:39:39.018077+00:00,1.ddqn_provided_sample,-1000.000000,0.000000,1,1000,5,500,0,0,2
