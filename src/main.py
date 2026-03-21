@@ -1,5 +1,6 @@
 import argparse
 import importlib.util
+import json
 import os
 import sys
 
@@ -98,6 +99,21 @@ def eval_agent(args):
     leaderboard_csv = "leaderboard.csv"
     append_leaderboard(leaderboard_csv, result)
     print(f"Appended results to {leaderboard_csv}")
+    
+    # Also save individual evaluation result to JSON for consistency
+    wall_suffix = "_wall" if args.wall else ""
+    eval_json_path = f"models/{args.submission}_level{args.level}{wall_suffix}_eval_results.json"
+    eval_data = {
+        "agent": args.submission,
+        "level": args.level,
+        "wall": args.wall,
+        "mean_reward": result.mean_score,
+        "std_reward": result.std_score,
+        "runs": result.runs
+    }
+    with open(eval_json_path, "w") as f:
+        json.dump(eval_data, f, indent=4)
+    print(f"Individual evaluation results saved to {eval_json_path}")
 
 def main():
     parser = argparse.ArgumentParser(description="OBELIX RL Agent Trainer & Evaluator")
