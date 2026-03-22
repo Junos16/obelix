@@ -47,10 +47,16 @@ def run_sweep(agent_name, agent_mod, get_params_fn, level, wall_obstacles, episo
         if os.path.exists(config_path):
             os.remove(config_path)
             
+        print(f"Trial {trial.number} finished. Mean Reward: {eval_result.mean_score:.2f}")
         return eval_result.mean_score
 
     wall_suffix = "_wall" if wall_obstacles else ""
-    db_path = f"sqlite:///models/{agent_name}_level{level}{wall_suffix}_sweep.db"
+    db_file = f"{agent_name}_level{level}{wall_suffix}_sweep.db"
+    db_abs_path = os.path.abspath(os.path.join("models", db_file))
+    db_path = f"sqlite:///{db_abs_path}"
+    
+    print(f"Using Optuna database at: {db_abs_path}")
+    
     study = optuna.create_study(
         study_name=f"{agent_name}_level{level}", 
         storage=db_path, 

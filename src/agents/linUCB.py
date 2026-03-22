@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import random
 import json
+import time
 import numpy as np
 import torch
 
@@ -60,8 +61,8 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
     random.seed(seed)
     np.random.seed(seed)    
     
-    # Bias feature added to make it so that expected_r isn't just all 0 when it passes through [0, 0, ..., 0]
-    agent = LinUCBAgent(n_actions=len(ACTIONS), n_features=N_FEATURES + 1)
+    # Bias feature is already included in N_FEATURES (18 base + 18 delta + 1 bias)
+    agent = LinUCBAgent(n_actions=len(ACTIONS), n_features=N_FEATURES)
     
     for episode in range(episodes):
         env = OBELIX(
@@ -78,6 +79,7 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
         prev_obs = obs.copy()
         episode_return = 0.0
 
+        t_start = time.time()
         for _ in range(config["max_steps"]):
             delta_obs = (obs - prev_obs).astype(np.float32)
             x_t = np.concatenate([obs, delta_obs, [1.0]]).reshape(-1, 1).astype(np.float32)
@@ -120,7 +122,8 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
             if done:
                 break
         
-        print(f"Episode {episode+1}/{episodes} return={episode_return:.1f}")
+        duration = time.time() - t_start
+        print(f"Episode {episode+1}/{episodes} return={episode_return:.1f} ({duration:.2f}s)")
     
     os.makedirs("models", exist_ok=True)
     out_path = f"models/linUCB_level{level}{'_wall' if wall_obstacles else ''}_weights.pth"

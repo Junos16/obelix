@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import random
 import json
+import time
 import numpy as np
 import torch
 
@@ -46,7 +47,7 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
         "planning_steps": 50,     
         "eps_start": 1.0,
         "eps_end": 0.05,
-        "eps_decay_episodes": int(episodes * 0.8),
+        "eps_decay_episodes": max(1, int(episodes * 0.8)),
         "seed": 42,
         "max_steps": 1000,
         "scaling_factor": 5,
@@ -94,6 +95,7 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
         import heapq
         theta = 1e-4
 
+        t_start = time.time()
         for _ in range(config["max_steps"]):
             action = get_epsilon_greedy_action(stateID, epsilon)
             
@@ -154,7 +156,8 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
             if done:
                 break
         
-        print(f"Episode {episode+1}/{episodes} return={episode_return:.1f} eps={epsilon:.3f}")
+        duration = time.time() - t_start
+        print(f"Episode {episode+1}/{episodes} return={episode_return:.1f} eps={epsilon:.3f} ({duration:.2f}s)")
     
     os.makedirs("models", exist_ok=True)
     out_path = f"models/dyna_q_level{level}{'_wall' if wall_obstacles else ''}_weights.pth"
@@ -182,5 +185,5 @@ def get_optuna_params(trial, total_episodes):
     params["alpha"] = trial.suggest_float("alpha", 0.01, 0.5, log=True)
     params["planning_steps"] = trial.suggest_categorical("planning_steps", [10, 50, 100, 250])
     eps_fraction = trial.suggest_float("eps_decay_fraction", 0.4, 0.9)
-    params["eps_decay_episodes"] = int(total_episodes * eps_fraction)
+    params["eps_decay_episodes"] = max(1, int(total_episodes * eps_fraction))
     return params

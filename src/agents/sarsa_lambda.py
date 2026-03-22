@@ -10,6 +10,7 @@ from __future__ import annotations
 import random
 import os
 import json
+import time
 import numpy as np
 import torch
 
@@ -98,6 +99,7 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
         q_old = agent.q_table[stateID, action]
         active_traces = set()
 
+        t_start = time.time()
         for _ in range(config["max_steps"]):
             next_obs, reward, done = env.step(ACTIONS[action], render=render)
             
@@ -150,8 +152,9 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
             
             if done:
                 break
-
-        print(f"Episode {episode+1}/{episodes} return={episode_return:.1f} eps={epsilon:.3f}")
+        
+        duration = time.time() - t_start
+        print(f"Episode {episode+1}/{episodes} return={episode_return:.1f} eps={epsilon:.3f} ({duration:.2f}s)")
     
     os.makedirs("models", exist_ok=True)
     out_path = f"models/sarsa_lambda_level{level}{'_wall' if wall_obstacles else ''}_weights.pth"
