@@ -1,3 +1,11 @@
+"""
+MODIFICATIONS:
+- Tabular State Encoding: 18-bit sensor mapping to 2^18 integer states.
+- Optimistic Initialization: Q-table initialized to +10 to encourage exploration.
+- Trace Management: Active trace set tracking to optimize updates.
+- True Online Update: Dutch traces for more stable and faster convergence.
+- Reward Shaping: Wandering penalty (-2.0), Intensity bonus (+5.0), Forward momentum (+0.5), and Anti-rotation penalty (-0.5).
+"""
 from __future__ import annotations
 import random
 import os
@@ -87,32 +95,47 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
 
         agent.reset_traces()
         episode_return = 0.0
-        
-        agent.reset_traces()
-        episode_return = 0.0
-        
+        q_old = agent.q_table[stateID, action]
         active_traces = set()
 
         for _ in range(config["max_steps"]):
-            #next_obs, reward, done = env.step(ACTIONS[action], render=False)
             next_obs, reward, done = env.step(ACTIONS[action], render=render)
+            
+            # Wandering Penalty: penalize seeing nothing
+            if np.sum(next_obs[:17]) == 0:
+                reward -= 2.0
+            
+            # Intensity Bonus: reward getting closer to objects
+            if np.sum(next_obs[:17]) > np.sum(obs[:17]):
+                reward += 5.0
+            
+            # Forward Momentum: reward moving forward when something is seen
+            if action == 2 and np.any(obs[4:12] > 0):
+                reward += 0.5
+            
+            # Anti-Rotation: penalize spinning when already near target
+            if action != 2 and np.any(obs[1:16:2] > 0):
+                reward -= 0.5
+                
             next_stateID = obs_to_state(next_obs)
             next_epsilon = max(config["eps_end"], config["eps_start"] - episode / config["eps_decay_episodes"])
             next_action = get_epsilon_greedy_action(next_stateID, next_epsilon)
             
-            if done:
-                td_error = reward - agent.q_table[stateID, action]
-            else:
-                td_error = reward + gamma * agent.q_table[next_stateID, next_action] - agent.q_table[stateID, action]
+            q_curr = agent.q_table[stateID, action]
+            q_next = agent.q_table[next_stateID, next_action] if not done else 0.0
+            delta = reward + gamma * q_next - q_curr
             
-            agent.e_table[stateID, action] = 1.0
+            # Dutch trace update for tabular case
+            agent.e_table[stateID, action] += (1.0 - alpha * gamma * lambda_ * agent.e_table[stateID, action])
             active_traces.add((stateID, action))
 
             traces_to_remove = []
             for s, a in active_traces:
-                agent.q_table[s, a] += alpha * td_error * agent.e_table[s, a]
-                agent.e_table[s, a] *= gamma * lambda_
+                agent.q_table[s, a] += alpha * (delta + q_curr - q_old) * agent.e_table[s, a]
+                if s == stateID and a == action:
+                    agent.q_table[s, a] -= alpha * (q_curr - q_old)
                 
+                agent.e_table[s, a] *= gamma * lambda_
                 if agent.e_table[s, a] < 1e-4:
                     agent.e_table[s, a] = 0.0
                     traces_to_remove.append((s, a))
@@ -120,6 +143,7 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
             for s, a in traces_to_remove:
                 active_traces.remove((s, a))
             
+            q_old = q_next
             stateID = next_stateID
             action = next_action
             episode_return += reward

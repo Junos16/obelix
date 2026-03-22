@@ -1,3 +1,11 @@
+"""
+MODIFICATIONS:
+- Tabular State Encoding: 18-bit sensor mapping to 2^18 integer states.
+- Optimistic Initialization: Q-table initialized to +10 to encourage exploration.
+- Prioritized Sweeping: TD-error based planning using a max-priority queue.
+- Predecessor Modeling: Reverse mapping of state transitions for optimized sweeps.
+- Reward Shaping: Wandering penalty (-2.0), Intensity bonus (+5.0), Forward momentum (+0.5), and Anti-rotation penalty (-0.5).
+"""
 from __future__ import annotations
 import os
 import random
@@ -17,7 +25,7 @@ class DynaQAgent:
     def __init__(self, n_actions=5):
         self.q_table = np.ones((STATE_SPACE_SIZE, n_actions), dtype=np.float32) * 10.0
         self.model = {}
-        self.visited_states = []
+        self.predecessors = {} 
 
 def obs_to_state(obs: np.ndarray) -> int:
     return np.sum(2**np.where(obs > 0)[0])
@@ -83,36 +91,62 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
         
         episode_return = 0.0
 
+        import heapq
+        theta = 1e-4
+
         for _ in range(config["max_steps"]):
             action = get_epsilon_greedy_action(stateID, epsilon)
             
             next_obs, reward, done = env.step(ACTIONS[action], render=render)
+            
+            # Wandering Penalty: penalize seeing nothing
+            if np.sum(next_obs[:17]) == 0:
+                reward -= 2.0
+            
+            # Intensity Bonus: reward getting closer to objects
+            if np.sum(next_obs[:17]) > np.sum(obs[:17]):
+                reward += 5.0
+            
+            # Forward Momentum: reward moving forward when something is seen
+            if action == 2 and np.any(obs[4:12] > 0):
+                reward += 0.5
+            
+            # Anti-Rotation: penalize spinning when already near target
+            if action != 2 and np.any(obs[1:16:2] > 0):
+                reward -= 0.5
+                
             next_stateID = obs_to_state(next_obs)
             
-            if done:
-                target = reward
-            else:
-                target = reward + gamma * np.max(agent.q_table[next_stateID])
-            
-            agent.q_table[stateID, action] = agent.q_table[stateID, action] + alpha * (target - agent.q_table[stateID, action])
+            td_error = reward + (gamma * np.max(agent.q_table[next_stateID]) if not done else 0.0) - agent.q_table[stateID, action]
+            agent.q_table[stateID, action] += alpha * td_error
             
             if stateID not in agent.model:
                 agent.model[stateID] = {}
-            if action not in agent.model[stateID]:
-                agent.visited_states.append((stateID, action)) 
-
             agent.model[stateID][action] = (reward, next_stateID, done)
+            
+            if next_stateID not in agent.predecessors:
+                agent.predecessors[next_stateID] = []
+            if (stateID, action, reward) not in agent.predecessors[next_stateID]:
+                agent.predecessors[next_stateID].append((stateID, action, reward))
 
-            for _ in range(planning_steps):
-                s, a = random.choice(agent.visited_states)
-                r, s_prime, is_terminal = agent.model[s][a]
+            queue = []
+            if abs(td_error) > theta:
+                heapq.heappush(queue, (-abs(td_error), stateID, action))
+
+            steps = 0
+            while queue and steps < planning_steps:
+                _, s, a = heapq.heappop(queue)
+                r_sim, s_prime_sim, done_sim = agent.model[s][a]
                 
-                if is_terminal:
-                    target = r
-                else:
-                    target = r + gamma * np.max(agent.q_table[s_prime])
+                td_sim = r_sim + (gamma * np.max(agent.q_table[s_prime_sim]) if not done_sim else 0.0) - agent.q_table[s, a]
+                agent.q_table[s, a] += alpha * td_sim
                 
-                agent.q_table[s, a] = agent.q_table[s, a] + alpha * (target - agent.q_table[s, a])
+                if s in agent.predecessors:
+                    for s_pre, a_pre, r_pre in agent.predecessors[s]:
+                        td_pre = r_pre + gamma * np.max(agent.q_table[s]) - agent.q_table[s_pre, a_pre]
+                        if abs(td_pre) > theta:
+                            heapq.heappush(queue, (-abs(td_pre), s_pre, a_pre))
+                steps += 1
             
             stateID = next_stateID
             episode_return += reward
@@ -120,8 +154,7 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
             if done:
                 break
         
-        if (episode + 1) % 10 == 0:
-            print(f"Episode {episode+1}/{episodes} return={episode_return:.1f} eps={epsilon:.3f}")
+        print(f"Episode {episode+1}/{episodes} return={episode_return:.1f} eps={epsilon:.3f}")
     
     os.makedirs("models", exist_ok=True)
     out_path = f"models/dyna_q_level{level}{'_wall' if wall_obstacles else ''}_weights.pth"

@@ -1,3 +1,9 @@
+"""
+MODIFICATIONS:
+- Feature Engineering: 37 features (18-bit Obs + 18-bit Delta Obs + 1 Bias).
+- Reward Shaping: Wandering penalty (-2.0), Intensity bonus (+5.0), Forward momentum (+0.5), and Anti-rotation penalty (-0.5).
+- Model Storage: Saves and loads both A (covariance) and b (reward) matrices.
+"""
 from __future__ import annotations
 import os
 import random
@@ -8,7 +14,7 @@ import torch
 from obelix import OBELIX
 
 ACTIONS = ["L45", "L22", "FW", "R22", "R45"]
-N_FEATURES = 18 
+N_FEATURES = 37 
 
 _CURRENT_LEVEL = 1
 _CURRENT_WALL = False
@@ -69,10 +75,12 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
         )
 
         obs = env.reset(seed=seed+episode)
+        prev_obs = obs.copy()
         episode_return = 0.0
 
         for _ in range(config["max_steps"]):
-            x_t = np.append(obs, 1).reshape(-1, 1).astype(np.float32)
+            delta_obs = (obs - prev_obs).astype(np.float32)
+            x_t = np.concatenate([obs, delta_obs, [1.0]]).reshape(-1, 1).astype(np.float32)
             
             p = np.zeros(len(ACTIONS))
 
@@ -86,17 +94,33 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
             action = np.argmax(p)
             next_obs, reward, done = env.step(ACTIONS[action], render=render)
             
+            # Wandering Penalty: penalize seeing nothing
+            if np.sum(next_obs[:17]) == 0:
+                reward -= 2.0
+            
+            # Intensity Bonus: reward getting closer to objects
+            if np.sum(next_obs[:17]) > np.sum(obs[:17]):
+                reward += 5.0
+                
+            # Forward Momentum: reward moving forward when something is seen
+            if action == 2 and np.any(obs[4:12] > 0):
+                reward += 0.5
+            
+            # Anti-Rotation: penalize spinning when already near target
+            if action != 2 and np.any(obs[1:16:2] > 0):
+                reward -= 0.5
+            
             agent.A[action] = agent.A[action] + (x_t @ x_t.T)
             agent.b[action] = agent.b[action] + (reward * x_t) 
 
+            prev_obs = obs.copy()
             obs = next_obs
             episode_return += reward
             
             if done:
                 break
         
-        if (episode + 1) % 10 == 0:
-            print(f"Episode {episode+1}/{episodes} return={episode_return:.1f}")
+        print(f"Episode {episode+1}/{episodes} return={episode_return:.1f}")
     
     os.makedirs("models", exist_ok=True)
     out_path = f"models/linUCB_level{level}{'_wall' if wall_obstacles else ''}_weights.pth"
@@ -109,12 +133,13 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
     print(f"Saved LinUCB matrices to {out_path}")
 
 _LINUCB_STATE = None
+_PREV_OBS_EVAL = None
 
 def _load_once():
     global _LINUCB_STATE
     if _LINUCB_STATE is None:
         wpath = f"models/linUCB_level{_CURRENT_LEVEL}{'_wall' if _CURRENT_WALL else ''}_weights.pth"
-        loaded = torch.load(wpath, map_location="cpu", weights_only=True).numpy()
+        loaded = torch.load(wpath, map_location="cpu", weights_only=True)
         _LINUCB_STATE = {
             "A": loaded["A"].numpy(),
             "b": loaded["b"].numpy()
@@ -122,9 +147,17 @@ def _load_once():
     return _LINUCB_STATE
     
 def policy(obs: np.ndarray, rng: np.random.Generator) -> str:
+    global _PREV_OBS_EVAL
     state = _load_once()
     
-    x_t = np.append(obs, 1.0).reshape(-1, 1).astype(np.float32)
+    if _PREV_OBS_EVAL is None:
+        delta_obs = np.zeros_like(obs, dtype=np.float32)
+    else:
+        delta_obs = (obs - _PREV_OBS_EVAL).astype(np.float32)
+    
+    _PREV_OBS_EVAL = obs.copy()
+    
+    x_t = np.concatenate([obs, delta_obs, [1.0]]).reshape(-1, 1).astype(np.float32)
     expected_rewards = np.zeros(len(ACTIONS))
 
     for a in range(len(ACTIONS)):
