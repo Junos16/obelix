@@ -33,12 +33,12 @@ def run_sweep(agent_name, agent_mod, get_params_fn, level, wall_obstacles, episo
         
         eval_result = evaluate_agent(
             agent_policy=agent_mod.policy,
-            agent_name=f"{agent_name}_trial_{trial.number}",
-            runs=5,
-            base_seed=100, 
+            agent_name=agent_name,
+            runs=2,
+            base_seed=trial.number * 42,
             scaling_factor=5,
             arena_size=500,
-            max_steps=1000,
+            max_steps=500,
             wall_obstacles=wall_obstacles,
             difficulty=difficulty,
             box_speed=2
