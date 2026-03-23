@@ -1,10 +1,9 @@
 """
 MODIFICATIONS:
 - Tabular State Encoding: 18-bit sensor mapping to 2^18 integer states.
-- Optimistic Initialization: Q-table initialized to +10 to encourage exploration.
+- Zero Initialization: Q-table initialized to 0.0 to prevent exploration oscillation.
 - Prioritized Sweeping: TD-error based planning using a max-priority queue.
 - Predecessor Modeling: Reverse mapping of state transitions for optimized sweeps.
-- Reward Shaping: Wandering penalty (-2.0), Intensity bonus (+5.0), Forward momentum (+0.5), and Anti-rotation penalty (-0.5).
 """
 from __future__ import annotations
 import os
@@ -25,7 +24,7 @@ STATE_SPACE_SIZE = 2**18
 
 class DynaQAgent:
     def __init__(self, n_actions=5):
-        self.q_table = np.ones((STATE_SPACE_SIZE, n_actions), dtype=np.float32) * 10.0
+        self.q_table = np.zeros((STATE_SPACE_SIZE, n_actions), dtype=np.float32)
         self.model = {}
         self.predecessors = {} 
 
@@ -100,24 +99,7 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
         t_start = time.time()
         for _ in range(config["max_steps"]):
             action = get_epsilon_greedy_action(stateID, epsilon)
-            
             next_obs, reward, done = env.step(ACTIONS[action], render=render)
-            
-            # Wandering Penalty: penalize seeing nothing
-            if np.sum(next_obs[:17]) == 0:
-                reward -= 2.0
-            
-            # Intensity Bonus: reward getting closer to objects
-            if np.sum(next_obs[:17]) > np.sum(obs[:17]):
-                reward += 5.0
-            
-            # Forward Momentum: reward moving forward when something is seen
-            if action == 2 and np.any(obs[4:12] > 0):
-                reward += 0.5
-            
-            # Anti-Rotation: penalize spinning when already near target
-            if action != 2 and np.any(obs[1:16:2] > 0):
-                reward -= 0.5
                 
             next_stateID = obs_to_state(next_obs)
             

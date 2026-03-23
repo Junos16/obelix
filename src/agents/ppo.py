@@ -5,7 +5,6 @@ MODIFICATIONS:
 - Objective Functions: Added Clipped Surrogate Objective for the policy, Value Function Clipping for the critic, and an Entropy Bonus for improved exploration.
 - Training Stability: Applied Mini-batch Advantage Normalization before each update step to safely scale learning.
 - State Representation: 36 features utilizing 18-dim baseline observations concatenated with 18-dim delta observations (obs - prev_obs).
-- Reward Shaping: Integrated the standard wandering penalty (-2.0), intensity bonus (+5.0), forward momentum (+0.5), and anti-rotation penalty (-0.5).
 - Device Management: Dynamically mounts to CUDA for sweeping and CPU for evaluation calls.
 """
 from __future__ import annotations
@@ -157,12 +156,8 @@ def train(level: int, wall_obstacles: bool, episodes: int, seed: int = None, tri
             a = action.item()
             next_obs_raw, r, done = env.step(ACTIONS[a], render=render)
             
-            # Reward Shaping
             shaped_r = float(r)
-            if np.sum(next_obs_raw[:17]) == 0: shaped_r -= 2.0
-            if np.sum(next_obs_raw[:17]) > np.sum(obs_raw[:17]): shaped_r += 5.0
-            if a == 2 and np.any(obs_raw[4:12] > 0): shaped_r += 0.5
-            if a != 2 and np.any(obs_raw[1:16:2] > 0): shaped_r -= 0.5
+            ep_ret += float(r)
 
             buffer_s.append(s)
             buffer_a.append(a)
@@ -171,7 +166,6 @@ def train(level: int, wall_obstacles: bool, episodes: int, seed: int = None, tri
             buffer_r.append(shaped_r)
             buffer_d.append(1.0 if done else 0.0)
 
-            ep_ret += float(r)
             prev_obs_raw = obs_raw.copy()
             obs_raw = next_obs_raw
 

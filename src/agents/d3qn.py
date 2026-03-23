@@ -233,17 +233,7 @@ def train(level: int, wall_obstacles: bool, episodes: int, seed: int = None, tri
             nxt_delta_obs = (next_obs_raw - obs_raw).astype(np.float32)
             s2 = np.concatenate([next_obs_raw, nxt_delta_obs]).astype(np.float32)
             
-            # Reward Shaping
             shaped_r = float(r)
-            if np.sum(next_obs_raw[:17]) == 0:
-                shaped_r -= 2.0  # Wandering penalty
-            if np.sum(next_obs_raw[:17]) > np.sum(obs_raw[:17]):
-                shaped_r += 5.0  # Intensity bonus
-            if a == 2 and np.any(obs_raw[4:12] > 0):
-                shaped_r += 0.5  # Forward momentum
-            if a != 2 and np.any(obs_raw[1:16:2] > 0):
-                shaped_r -= 0.5  # Anti-rotation
-            
             ep_ret += float(r) # Track true unshaped reward
             replay.add(Transition(s=s, a=a, r=shaped_r, s2=s2, done=bool(done)))
             

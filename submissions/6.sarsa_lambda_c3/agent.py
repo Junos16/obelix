@@ -7,8 +7,9 @@ import torch
 ACTIONS: List[str] = ["L45", "L22", "FW", "R22", "R45"]
 STATE_SPACE_SIZE = 2**18
 
-def obs_to_state(obs: np.ndarray) -> int:
-    return np.sum(2**np.where(obs > 0)[0])
+def obs_to_state(obs: np.ndarray, last_action: int) -> int:
+    base_state = int(np.sum(2**np.where(obs > 0)[0]))
+    return base_state * 5 + last_action
 
 _Q_TABLE: Optional[np.ndarray] = None
 _last_action: Optional[int] = None
@@ -32,7 +33,8 @@ def policy(obs: np.ndarray, rng: np.random.Generator) -> str:
     global _last_action, _repeat_count
     _load_once()
     
-    stateID = obs_to_state(obs)
+    last_act = 2 if _last_action is None else _last_action
+    stateID = obs_to_state(obs, last_act)
     q = _Q_TABLE[stateID]
     best = int(np.argmax(q))
 

@@ -1,10 +1,9 @@
 """
 MODIFICATIONS:
-- Tabular State Encoding: 18-bit sensor mapping to 2^18 integer states.
-- Optimistic Initialization: Q-table initialized to +10 to encourage exploration.
+- Tabular State Encoding: 18-bit sensor mapping + history of last action to 5*2^18 integer states.
+- Zero Initialization: Q-table initialized to 0.0 to prevent optimistic exploration from trapping agent.
 - Trace Management: Active trace set tracking to optimize updates.
 - True Online Update: Dutch traces for more stable and faster convergence.
-- Reward Shaping: Wandering penalty (-2.0), Intensity bonus (+5.0), Forward momentum (+0.5), and Anti-rotation penalty (-0.5).
 """
 from __future__ import annotations
 import random
@@ -21,19 +20,20 @@ _CURRENT_LEVEL = 1
 _CURRENT_WALL = False
 _CURRENT_PREFIX = None
 _Q_TABLE = None
-STATE_SPACE_SIZE = 2**18
+STATE_SPACE_SIZE = 5 * (2**18)
 
 class SarsaLambdaAgent:
     def __init__(self, n_actions=5):
         # self.q_table = np.zeroes((STATE_SPACE_SIZE, n_actions), dtype=np.float32)
-        self.q_table = np.ones((STATE_SPACE_SIZE, n_actions), dtype=np.float32) * 10
+        self.q_table = np.zeros((STATE_SPACE_SIZE, n_actions), dtype=np.float32)
         self.e_table = np.zeros((STATE_SPACE_SIZE, n_actions), dtype=np.float32)
 
     def reset_traces(self):
         self.e_table.fill(0.0)
 
-def obs_to_state(obs: np.ndarray) -> int:
-    return np.sum(2**np.where(obs > 0)[0])
+def obs_to_state(obs: np.ndarray, last_action: int) -> int:
+    base_state = int(np.sum(2**np.where(obs > 0)[0]))
+    return base_state * 5 + last_action
 
 def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = None, render: bool = False, prefix: str = None):
     global _CURRENT_LEVEL, _CURRENT_WALL, _CURRENT_PREFIX, _Q_TABLE
@@ -92,7 +92,8 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
         )
 
         obs = env.reset(seed=seed+episode)
-        stateID = obs_to_state(obs)
+        last_action = 2 # Best guess for start is Forward
+        stateID = obs_to_state(obs, last_action)
         epsilon = max(config["eps_end"], config["eps_start"] - episode / config["eps_decay_episodes"])
         action = get_epsilon_greedy_action(stateID, epsilon)
 
@@ -105,23 +106,7 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
         for _ in range(config["max_steps"]):
             next_obs, reward, done = env.step(ACTIONS[action], render=render)
             
-            # Wandering Penalty: penalize seeing nothing
-            if np.sum(next_obs[:17]) == 0:
-                reward -= 2.0
-            
-            # Intensity Bonus: reward getting closer to objects
-            if np.sum(next_obs[:17]) > np.sum(obs[:17]):
-                reward += 5.0
-            
-            # Forward Momentum: reward moving forward when something is seen
-            if action == 2 and np.any(obs[4:12] > 0):
-                reward += 0.5
-            
-            # Anti-Rotation: penalize spinning when already near target
-            if action != 2 and np.any(obs[1:16:2] > 0):
-                reward -= 0.5
-                
-            next_stateID = obs_to_state(next_obs)
+            next_stateID = obs_to_state(next_obs, action)
             next_epsilon = max(config["eps_end"], config["eps_start"] - episode / config["eps_decay_episodes"])
             next_action = get_epsilon_greedy_action(next_stateID, next_epsilon)
             
@@ -147,7 +132,8 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
             for s, a in traces_to_remove:
                 active_traces.remove((s, a))
             
-            q_old = q_next
+            obs = next_obs
+            last_action = action
             stateID = next_stateID
             action = next_action
             episode_return += reward
@@ -174,10 +160,14 @@ def _load_once():
         _Q_TABLE = torch.load(wpath, map_location="cpu", weights_only=True).numpy()
     return _Q_TABLE
     
+_LAST_ACTION = 2
+
 def policy(obs: np.ndarray, rng: np.random.Generator) -> str:
+    global _LAST_ACTION
     _load_once()
-    stateID = obs_to_state(obs)
+    stateID = obs_to_state(obs, _LAST_ACTION)
     best_action_idx = int(np.argmax(_Q_TABLE[stateID]))
+    _LAST_ACTION = best_action_idx
     return ACTIONS[best_action_idx]
 
 def get_optuna_params(trial, total_episodes):

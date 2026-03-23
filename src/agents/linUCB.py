@@ -1,7 +1,6 @@
 """
 MODIFICATIONS:
 - Feature Engineering: 37 features (18-bit Obs + 18-bit Delta Obs + 1 Bias).
-- Reward Shaping: Wandering penalty (-2.0), Intensity bonus (+5.0), Forward momentum (+0.5), and Anti-rotation penalty (-0.5).
 - Model Storage: Saves and loads both A (covariance) and b (reward) matrices.
 """
 from __future__ import annotations
@@ -97,22 +96,6 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
             
             action = np.argmax(p)
             next_obs, reward, done = env.step(ACTIONS[action], render=render)
-            
-            # Wandering Penalty: penalize seeing nothing
-            if np.sum(next_obs[:17]) == 0:
-                reward -= 2.0
-            
-            # Intensity Bonus: reward getting closer to objects
-            if np.sum(next_obs[:17]) > np.sum(obs[:17]):
-                reward += 5.0
-                
-            # Forward Momentum: reward moving forward when something is seen
-            if action == 2 and np.any(obs[4:12] > 0):
-                reward += 0.5
-            
-            # Anti-Rotation: penalize spinning when already near target
-            if action != 2 and np.any(obs[1:16:2] > 0):
-                reward -= 0.5
             
             agent.A[action] = agent.A[action] + (x_t @ x_t.T)
             agent.b[action] = agent.b[action] + (reward * x_t) 
