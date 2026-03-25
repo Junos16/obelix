@@ -19,14 +19,15 @@ def run_sweep(agent_name, agent_mod, get_params_fn, level, wall_obstacles, episo
         with open(config_path, "w") as f:
             json.dump(params, f)
             
-        # Train
+        # Train (pass trial for pruning support)
         agent_mod.train(
             level=level, 
             wall_obstacles=wall_obstacles, 
             episodes=episodes, 
             config_file=config_path,
             render=render,
-            prefix=prefix
+            prefix=prefix,
+            trial=trial
         )
         
         # Evaluate
@@ -63,7 +64,8 @@ def run_sweep(agent_name, agent_mod, get_params_fn, level, wall_obstacles, episo
         study_name=base_name, 
         storage=db_path, 
         load_if_exists=True,
-        direction="maximize"
+        direction="maximize",
+        pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=10)
     )
     
     study.optimize(objective, n_trials=n_trials)

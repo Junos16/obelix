@@ -12,6 +12,7 @@ import json
 import time
 import numpy as np
 import torch
+import optuna
 
 from obelix import OBELIX
 
@@ -35,7 +36,7 @@ def obs_to_state(obs: np.ndarray, last_action: int) -> int:
     base_state = int(np.sum(2**np.where(obs > 0)[0]))
     return base_state * 5 + last_action
 
-def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = None, render: bool = False, prefix: str = None):
+def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = None, render: bool = False, prefix: str = None, trial=None):
     global _CURRENT_LEVEL, _CURRENT_WALL, _CURRENT_PREFIX, _Q_TABLE
     _CURRENT_LEVEL = level
     _CURRENT_WALL = wall_obstacles
@@ -143,6 +144,11 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
         
         duration = time.time() - t_start
         print(f"Episode {episode+1}/{episodes} return={episode_return:.1f} eps={epsilon:.3f} ({duration:.2f}s)")
+        
+        if trial is not None:
+            trial.report(episode_return, episode)
+            if trial.should_prune():
+                raise optuna.TrialPruned()
     
     os.makedirs("models", exist_ok=True)
     base_name = f"{prefix}" if prefix else f"sarsa_lambda_level{level}{'_wall' if wall_obstacles else ''}"

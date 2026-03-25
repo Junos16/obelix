@@ -10,6 +10,7 @@ import json
 import time
 import numpy as np
 import torch
+import optuna
 
 from obelix import OBELIX
 
@@ -32,7 +33,7 @@ class LinUCBAgent:
             
         self.b = np.zeros((n_actions, n_features, 1), dtype=np.float32)
 
-def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = None, render: bool = False, prefix: str = None):
+def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = None, render: bool = False, prefix: str = None, trial=None):
     global _CURRENT_LEVEL, _CURRENT_WALL, _CURRENT_PREFIX, _LINUCB_STATE
     _CURRENT_LEVEL = level
     _CURRENT_WALL = wall_obstacles
@@ -109,6 +110,11 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
         
         duration = time.time() - t_start
         print(f"Episode {episode+1}/{episodes} return={episode_return:.1f} ({duration:.2f}s)")
+        
+        if trial is not None:
+            trial.report(episode_return, episode)
+            if trial.should_prune():
+                raise optuna.TrialPruned()
     
     os.makedirs("models", exist_ok=True)
     base_name = f"{prefix}" if prefix else f"linUCB_level{level}{'_wall' if wall_obstacles else ''}"

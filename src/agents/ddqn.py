@@ -4,7 +4,7 @@ import random
 from collections import deque
 from dataclasses import dataclass
 from typing import Deque
-
+import optuna
 import numpy as np
 import torch
 import torch.nn as nn
@@ -57,7 +57,7 @@ class Replay:
 
 import json
 
-def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = None, render: bool = False, prefix: str = None):
+def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = None, render: bool = False, prefix: str = None, trial=None):
     """
     Standardized train function called by src/main.py
     """
@@ -187,6 +187,11 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
 
         if (ep + 1) % 50 == 0:
             print(f"Episode {ep+1}/{episodes} return={ep_ret:.1f} eps={eps_by_step(steps):.3f} replay={len(replay)}")
+        
+        if trial is not None:
+            trial.report(ep_ret, ep)
+            if trial.should_prune():
+                raise optuna.TrialPruned()
 
     os.makedirs("models", exist_ok=True)
     base_name = f"{prefix}" if prefix else f"ddqn_level{level}{'_wall' if wall_obstacles else ''}"

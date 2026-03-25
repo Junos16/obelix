@@ -12,8 +12,7 @@ import os
 import random
 import time
 import json
-import importlib
-
+import optuna
 import numpy as np
 import torch
 import torch.nn as nn
@@ -246,7 +245,7 @@ def train(level: int, wall_obstacles: bool, episodes: int, seed: int = None, tri
         if trial is not None:
             trial.report(ep_ret, ep)
             if trial.should_prune():
-                raise importlib.import_module("optuna.exceptions").TrialPruned()
+                raise optuna.TrialPruned()
 
         duration = time.time() - t_start
         print(f"Episode {ep+1}/{episodes} return={ep_ret:.1f} ({duration:.2f}s)")
