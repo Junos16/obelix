@@ -13,7 +13,7 @@ def obs_to_state(obs: np.ndarray, decay_bin: int) -> int:
 
 _Q_TABLE: Optional[np.ndarray] = None
 _last_action: Optional[int] = None
-
+_time_since_seen: int = 100
 _repeat_count: int = 0
 _MAX_REPEAT = 2
 _CLOSE_Q_DELTA = 0.05

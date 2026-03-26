@@ -190,7 +190,7 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
     print(f"Saved Q-table to {out_path}")
 
 _last_action: Optional[int] = None
-
+_time_since_seen: int = 100
 _repeat_count: int = 0
 _MAX_REPEAT = 2
 _CLOSE_Q_DELTA = 0.05
