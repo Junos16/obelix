@@ -153,7 +153,6 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
     base_name = f"{prefix}" if prefix else f"exp_sarsa_target_lock_level{level}{'_wall' if wall_obstacles else ''}"
     out_path = f"models/{base_name}_trial_{trial.number}_weights.pth" if trial is not None else f"models/{base_name}_weights.pth"
     
-    global _Q_TABLE
     _Q_TABLE = agent.q_table
     torch.save(torch.from_numpy(agent.q_table), out_path)
     print(f"Saved Q-table to {out_path}")
