@@ -7,6 +7,7 @@ MODIFICATIONS:
 """
 from __future__ import annotations
 import os
+from typing import Optional
 import random
 import json
 import time
@@ -188,23 +189,59 @@ def train(level: int, wall_obstacles: bool, episodes: int, config_file: str = No
     torch.save(torch.from_numpy(agent.q_table), out_path)
     print(f"Saved Q-table to {out_path}")
 
+_last_action: Optional[int] = None
+_lock_timer: int = 0
+
+_repeat_count: int = 0
+_MAX_REPEAT = 2
+_CLOSE_Q_DELTA = 0.05
+
 def _load_once():
     global _Q_TABLE
-    if _Q_TABLE is None:
-        base_name = f"{_CURRENT_PREFIX}" if _CURRENT_PREFIX else f"stoch_dyna_q_level{_CURRENT_LEVEL}{'_wall' if _CURRENT_WALL else ''}"
-        wpath = f"models/{base_name}_weights.pth"
-        _Q_TABLE = torch.load(wpath, map_location="cpu", weights_only=True).numpy()
-    return _Q_TABLE
-    
+    if _Q_TABLE is not None:
+        return
+        
+    here = os.path.dirname(__file__)
+    wpath = os.path.join(here, "weights.pth")
+    if not os.path.exists(wpath):
+        raise FileNotFoundError(
+            "weights.pth not found next to agent.py. Train offline and include it in the submission zip."
+        )
+        
+    # Standard, highly secure PyTorch load
+    _Q_TABLE = torch.load(wpath, map_location="cpu", weights_only=True).numpy()
+
 def policy(obs: np.ndarray, rng: np.random.Generator) -> str:
-    global _last_action
+    global _last_action, _repeat_count, _lock_timer
     _load_once()
-    last_act = 2 if _last_action is None else _last_action
-    stateID = obs_to_state(obs, last_act)
     
-    best_action_idx = int(np.argmax(_Q_TABLE[stateID]))
-    _last_action = best_action_idx
-    return ACTIONS[best_action_idx]
+    if np.any(obs[:17] > 0):
+        _lock_timer = 30
+    else:
+        _lock_timer = max(0, _lock_timer - 1)
+        
+    target_lock = 1 if _lock_timer > 0 else 0
+    stateID = obs_to_state(obs, target_lock)
+    
+    q_vals = _Q_TABLE[stateID]
+    
+    order = np.argsort(-q_vals)
+    best = int(order[0])
+
+    # Smoothing Logic (Anti-Oscillation)
+    if _last_action is not None:
+        best_q, second_q = float(q_vals[order[0]]), float(q_vals[order[1]])
+        if (best_q - second_q) < _CLOSE_Q_DELTA:
+            if _repeat_count < _MAX_REPEAT:
+                best = _last_action
+                _repeat_count += 1
+            else:
+                _repeat_count = 0
+        else:
+            _repeat_count = 0
+
+    _last_action = best
+    return ACTIONS[best]
 
 def get_optuna_params(trial, total_episodes):
     params = {}
