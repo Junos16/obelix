@@ -118,7 +118,16 @@ def _evaluate_genome(flat_weights: np.ndarray,
                      wall_obstacles: bool,
                      config: dict,
                      n_rollouts: int = 3) -> float:
-    """Run n_rollouts episodes, return the mean shaped fitness."""
+    """Run n_rollouts episodes, return the mean shaped fitness.
+
+    Privileged shaping (only during training):
+      - Per-step distance reduction: +1.5 per pixel closer to box.
+      - Per-step heading alignment: +0.3 when facing within 45° of box.
+      - Attach bonus: +50 on first attachment.
+      - Push-to-boundary bonus: +500 on terminal success.
+    The raw env reward already includes -200 per stuck step, -1 per step,
+    one-time sensor bonuses, +100 attach, and +2000 boundary push.
+    """
     W1, b1, W2, b2, W3, b3 = _unpack_weights(flat_weights)
     seed = config["seed"]
     total_fitness = 0.0
@@ -136,20 +145,21 @@ def _evaluate_genome(flat_weights: np.ndarray,
         )
         obs = env.reset(seed=ep_seed)
 
-        # Privileged: initial distance
-        dx0 = env.bot_center_x - env.box_center_x
-        dy0 = env.bot_center_y - env.box_center_y
-        init_dist = math.sqrt(dx0 * dx0 + dy0 * dy0)
-
         ts_seen = 100
         ts_stuck = 100
         last_fw = 0.0
-        last_act_idx = 2  # FW
 
         env_reward = 0.0
-        stuck_steps = 0
+        distance_shaping = 0.0
+        heading_shaping = 0.0
         attached = False
         pushed_to_boundary = False
+
+        # Privileged: current distance to box
+        prev_dist = math.sqrt(
+            (env.bot_center_x - env.box_center_x) ** 2 +
+            (env.bot_center_y - env.box_center_y) ** 2
+        )
 
         for step in range(config["max_steps"]):
             # Update temporal memory
@@ -159,7 +169,6 @@ def _evaluate_genome(flat_weights: np.ndarray,
                 ts_seen += 1
             if obs[17] > 0:
                 ts_stuck = 0
-                stuck_steps += 1
             else:
                 ts_stuck += 1
 
@@ -171,9 +180,31 @@ def _evaluate_genome(flat_weights: np.ndarray,
             env_reward += reward
 
             last_fw = 1.0 if act_idx == 2 else 0.0
-            last_act_idx = act_idx
 
-            if env.enable_push:
+            # ----- Per-step privileged shaping -----
+            if not env.enable_push:
+                # Distance shaping: reward getting closer to the box
+                curr_dist = math.sqrt(
+                    (env.bot_center_x - env.box_center_x) ** 2 +
+                    (env.bot_center_y - env.box_center_y) ** 2
+                )
+                delta_dist = prev_dist - curr_dist  # positive = got closer
+                distance_shaping += 1.5 * delta_dist
+                prev_dist = curr_dist
+
+                # Heading shaping: reward facing toward the box
+                dx = env.box_center_x - env.bot_center_x
+                dy = env.box_center_y - env.bot_center_y
+                if abs(dx) + abs(dy) > 1e-3:
+                    angle_to_box = math.degrees(math.atan2(dy, dx)) % 360
+                    facing = env.facing_angle % 360
+                    angle_diff = abs(angle_to_box - facing)
+                    if angle_diff > 180:
+                        angle_diff = 360 - angle_diff
+                    if angle_diff < 45:
+                        heading_shaping += 0.3
+
+            if env.enable_push and not attached:
                 attached = True
             if done and env.enable_push:
                 pushed_to_boundary = True
@@ -181,17 +212,12 @@ def _evaluate_genome(flat_weights: np.ndarray,
             if done:
                 break
 
-        # Privileged: final distance
-        dx1 = env.bot_center_x - env.box_center_x
-        dy1 = env.bot_center_y - env.box_center_y
-        final_dist = math.sqrt(dx1 * dx1 + dy1 * dy1)
-
-        # Shaped fitness
+        # Shaped fitness = raw env reward + privileged shaping
         fitness = env_reward
+        fitness += distance_shaping
+        fitness += heading_shaping
         fitness += 50.0 if attached else 0.0
         fitness += 500.0 if pushed_to_boundary else 0.0
-        fitness -= 0.5 * stuck_steps
-        fitness += max(0.0, init_dist - final_dist) * 0.1
 
         total_fitness += fitness
 
