@@ -168,6 +168,7 @@ def train(level, wall_obstacles, episodes, config_file=None, render=False,
             seed=ep_seed,
         )
         obs = env.reset(seed=ep_seed)
+        t_ep = time.time()
 
         ts_seen = 100
         ts_stuck = 100
@@ -232,8 +233,7 @@ def train(level, wall_obstacles, episodes, config_file=None, render=False,
         if rolling_mean > best_rolling:
             best_rolling = rolling_mean
 
-        if (ep + 1) % 10 == 0:
-            print(f"  Ep {ep+1}/{episodes}  return={ep_return:.1f}  rolling_mean={rolling_mean:.1f}")
+        print(f"Ep {ep+1}/{episodes} | return={ep_return:.1f} | rolling10={rolling_mean:.1f} | gamma={config['gamma']:.3f} | n_steps={n_steps} | {time.time()-t_ep:.1f}s")
 
         if trial is not None:
             trial.report(rolling_mean, ep)

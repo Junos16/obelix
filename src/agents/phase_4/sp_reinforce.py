@@ -31,6 +31,7 @@ import os
 import json
 import math
 import random
+import time
 from collections import deque
 from typing import Optional
 
@@ -185,10 +186,12 @@ def train(level: int, wall_obstacles: bool, episodes: int,
     optimizer = torch.optim.Adam(net.parameters(), lr=config["lr"])
     gamma = config["gamma"]
 
+    rolling_returns = []
     print(f"REINFORCE SP: level={level}, wall={wall_obstacles}, episodes={episodes}")
 
     for ep in range(episodes):
         ep_seed = seed + ep * 1337
+        t_ep = time.time()
         env = OBELIX(
             scaling_factor=config["scaling_factor"],
             arena_size=config["arena_size"],
@@ -267,8 +270,11 @@ def train(level: int, wall_obstacles: bool, episodes: int,
         nn.utils.clip_grad_norm_(net.parameters(), 5.0)
         optimizer.step()
 
-        if (ep + 1) % 50 == 0:
-            print(f"Episode {ep+1}/{episodes}  return={ep_ret:.1f}  loss={loss.item():.4f}")
+        rolling_returns.append(ep_ret)
+        if len(rolling_returns) > 10:
+            rolling_returns.pop(0)
+        rolling_mean = float(sum(rolling_returns) / len(rolling_returns))
+        print(f"Episode {ep+1}/{episodes}  return={ep_ret:.1f}  rolling10={rolling_mean:.1f}  loss={loss.item():.4f}  ({time.time()-t_ep:.1f}s)")
 
         if trial is not None:
             trial.report(ep_ret, ep)

@@ -32,6 +32,7 @@ import os
 import json
 import math
 import random
+import time
 from collections import deque
 from dataclasses import dataclass
 from typing import Deque, Optional
@@ -284,6 +285,7 @@ def train(level: int, wall_obstacles: bool, episodes: int,
     total_steps = episodes * config["max_steps"]
     eps_decay_steps = max(1, int(total_steps * config["eps_decay_frac"]))
     steps = 0
+    rolling_returns = []
 
     def get_eps(t):
         if t >= eps_decay_steps:
@@ -294,6 +296,7 @@ def train(level: int, wall_obstacles: bool, episodes: int,
 
     for ep in range(episodes):
         ep_seed = seed + ep * 1337
+        t_ep = time.time()
         env = OBELIX(
             scaling_factor=config["scaling_factor"],
             arena_size=config["arena_size"],
@@ -391,8 +394,12 @@ def train(level: int, wall_obstacles: bool, episodes: int,
 
         nstep.flush_all(replay)
 
-        if (ep + 1) % 50 == 0:
-            print(f"Episode {ep+1}/{episodes}  return={ep_ret:.1f}  eps={get_eps(steps):.3f}  replay={len(replay)}")
+        rolling_returns.append(ep_ret)
+        if len(rolling_returns) > 10:
+            rolling_returns.pop(0)
+        rolling_mean = float(sum(rolling_returns) / len(rolling_returns))
+        print(f"Episode {ep+1}/{episodes}  return={ep_ret:.1f}  rolling10={rolling_mean:.1f}  "
+              f"eps={get_eps(steps):.3f}  replay={len(replay)}  ({time.time()-t_ep:.1f}s)")
 
         if trial is not None:
             trial.report(ep_ret, ep)

@@ -34,6 +34,8 @@ import json
 import math
 from typing import Optional
 
+import time
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -200,6 +202,7 @@ def train(level, wall_obstacles, episodes, config_file=None, render=False, prefi
 
     for ep in range(episodes):
         ep_seed = seed + ep
+        t_ep = time.time()
         env = OBELIX(
             scaling_factor=config["scaling_factor"],
             arena_size=config["arena_size"],
@@ -278,8 +281,7 @@ def train(level, wall_obstacles, episodes, config_file=None, render=False, prefi
         if ep_ret > best_ret:
             best_ret = ep_ret
 
-        if (ep + 1) % 50 == 0:
-            print(f"Episode {ep+1}/{episodes}  ret={ep_ret:.1f}  best={best_ret:.1f}")
+        print(f"Episode {ep+1}/{episodes}  ret={ep_ret:.1f}  best={best_ret:.1f}  ({time.time()-t_ep:.1f}s)")
 
         if trial is not None:
             trial.report(ep_ret, ep)
