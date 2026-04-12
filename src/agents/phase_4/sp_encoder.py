@@ -180,12 +180,16 @@ def train(level: int, wall_obstacles: bool, episodes: int,
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    print(f"Collecting {config['data_episodes']} episodes for encoder training (level={level}, wall={wall_obstacles})")
+    import time
+    t0_collect = time.time()
+    n_data_eps = config["data_episodes"]
+    log_interval = max(1, n_data_eps // 5)
+    print(f"[encoder] Collecting {n_data_eps} episodes  (level={level}, wall={wall_obstacles})")
 
     inputs = []
     targets = []
 
-    for ep in range(config["data_episodes"]):
+    for ep in range(n_data_eps):
         ep_seed = seed + ep * 1337
         env = OBELIX(
             scaling_factor=config["scaling_factor"],
@@ -220,10 +224,25 @@ def train(level: int, wall_obstacles: bool, episodes: int,
             if done:
                 break
 
+        if (ep + 1) % log_interval == 0 or ep == 0:
+            elapsed = time.time() - t0_collect
+            rate = (ep + 1) / elapsed
+            eta = (n_data_eps - ep - 1) / rate if rate > 0 else float("inf")
+            print(f"  collect {ep+1:>{len(str(n_data_eps))}}/{n_data_eps}  "
+                  f"samples={len(inputs):,}  "
+                  f"elapsed={elapsed:.0f}s  ETA={eta:.0f}s")
+
     inputs_t = torch.tensor(np.array(inputs), dtype=torch.float32)
     targets_t = torch.tensor(np.array(targets), dtype=torch.float32)
 
-    print(f"Collected {len(inputs_t)} samples. Training encoder for {config['encoder_epochs']} epochs.")
+    collect_time = time.time() - t0_collect
+    print(f"[encoder] Dataset: {len(inputs_t):,} samples collected in {collect_time:.0f}s")
+    belief_names = ["dist_norm","sin_ang","cos_ang","box_vis","box_vx","box_vy","enable_push","stuck","ts_seen","corner_dist"]
+    means = targets_t.mean(0).tolist()
+    stds  = targets_t.std(0).tolist()
+    print(f"  belief target stats (mean ± std):")
+    for i, name in enumerate(belief_names):
+        print(f"    [{i}] {name:<14} {means[i]:+.3f} ± {stds[i]:.3f}")
 
     encoder = EncoderNet()
     optimizer = torch.optim.Adam(encoder.parameters(), lr=config["encoder_lr"])
@@ -234,8 +253,15 @@ def train(level: int, wall_obstacles: bool, episodes: int,
     dataset = torch.utils.data.TensorDataset(inputs_t, targets_t)
     loader = torch.utils.data.DataLoader(dataset, batch_size=config["encoder_batch_size"], shuffle=True)
 
-    for epoch in range(config["encoder_epochs"]):
-        epoch_loss = 0.0
+    n_epochs = config["encoder_epochs"]
+    log_every = max(1, n_epochs // 20)
+    t0_train = time.time()
+    print(f"[encoder] Training for {n_epochs} epochs  "
+          f"(lr={config['encoder_lr']}, batch={config['encoder_batch_size']})")
+
+    for epoch in range(n_epochs):
+        epoch_mse = 0.0
+        epoch_bce = 0.0
         n_batches = 0
         for xb, yb in loader:
             pred = encoder(xb)
@@ -246,10 +272,33 @@ def train(level: int, wall_obstacles: bool, episodes: int,
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            epoch_loss += loss.item()
+            epoch_mse += mse.item()
+            epoch_bce += bce.item()
             n_batches += 1
-        if (epoch + 1) % 10 == 0:
-            print(f"Epoch {epoch+1}/{config['encoder_epochs']}  loss={epoch_loss/max(1,n_batches):.4f}")
+        if (epoch + 1) % log_every == 0 or epoch == 0:
+            avg_mse = epoch_mse / max(1, n_batches)
+            avg_bce = epoch_bce / max(1, n_batches)
+            elapsed = time.time() - t0_train
+            eta = elapsed / (epoch + 1) * (n_epochs - epoch - 1)
+            print(f"  epoch {epoch+1:>{len(str(n_epochs))}}/{n_epochs}  "
+                  f"loss={avg_mse+avg_bce:.4f}  "
+                  f"mse={avg_mse:.4f}  bce={avg_bce:.4f}  "
+                  f"ETA={eta:.0f}s")
+
+    # Post-training per-dimension eval on full dataset
+    encoder.eval()
+    with torch.no_grad():
+        all_pred = encoder(inputs_t)
+        print(f"[encoder] Final per-dimension errors (on training set):")
+        for i, name in enumerate(belief_names):
+            if i in binary_idx:
+                prob = torch.sigmoid(all_pred[:, i])
+                acc = ((prob > 0.5).float() == targets_t[:, i]).float().mean().item()
+                print(f"    [{i}] {name:<14} accuracy={acc:.3f}")
+            else:
+                mae = (all_pred[:, i] - targets_t[:, i]).abs().mean().item()
+                print(f"    [{i}] {name:<14} MAE={mae:.4f}")
+    encoder.train()
 
     os.makedirs("models", exist_ok=True)
     if prefix:
