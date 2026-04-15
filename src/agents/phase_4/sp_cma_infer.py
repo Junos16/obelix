@@ -26,7 +26,7 @@ _CLOSE_Q_DELTA = 0.02
 _MAX_REPEAT    = 3
 
 _enc:             Optional[nn.Module] = None
-_pol_weights:     Optional[np.ndarray] = None
+_pol_model:       Optional[nn.Module] = None
 _obs_window:      deque = deque(maxlen=WIN_SIZE)
 _last_action:     Optional[int] = None
 _repeat_count:    int = 0
@@ -49,32 +49,38 @@ class EncoderNet(nn.Module):
         return self.net(x)
 
 
-def _unpack_policy(flat):
+class PolicyNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(POL_IN, POL_H1),
+            nn.Tanh(),
+            nn.Linear(POL_H1, POL_H2),
+            nn.Tanh(),
+            nn.Linear(POL_H2, POL_OUT),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+def _flat_to_policy(flat: np.ndarray) -> PolicyNet:
+    """Load a flat CMA-ES parameter vector into a PolicyNet (matches numpy packing order)."""
+    model = PolicyNet()
     idx = 0
-    def take(shape):
-        nonlocal idx
-        size = 1
-        for s in shape: size *= s
-        w = flat[idx:idx + size].reshape(shape)
-        idx += size
-        return w
-    W1 = take((POL_IN, POL_H1))
-    b1 = take((POL_H1,))
-    W2 = take((POL_H1, POL_H2))
-    b2 = take((POL_H2,))
-    W3 = take((POL_H2, POL_OUT))
-    b3 = take((POL_OUT,))
-    return W1, b1, W2, b2, W3, b3
-
-
-def _forward_policy(x, W1, b1, W2, b2, W3, b3):
-    h1 = np.tanh(x @ W1 + b1)
-    h2 = np.tanh(h1 @ W2 + b2)
-    return h2 @ W3 + b3
+    for layer in [model.net[0], model.net[2], model.net[4]]:
+        n_w = layer.in_features * layer.out_features
+        W = flat[idx:idx + n_w].reshape(layer.in_features, layer.out_features)
+        layer.weight.data = torch.from_numpy(W.T.copy()).float()
+        idx += n_w
+        layer.bias.data = torch.from_numpy(flat[idx:idx + layer.out_features].copy()).float()
+        idx += layer.out_features
+    model.eval()
+    return model
 
 
 def _load_once():
-    global _enc, _pol_weights
+    global _enc, _pol_model
     if _enc is not None:
         return
     here  = os.path.dirname(__file__)
@@ -86,7 +92,7 @@ def _load_once():
     enc.load_state_dict(ckpt["encoder"])
     enc.eval()
     _enc = enc
-    _pol_weights = ckpt["policy"].numpy()
+    _pol_model = _flat_to_policy(ckpt["policy"].numpy())
 
 
 @torch.no_grad()
@@ -119,7 +125,8 @@ def policy(obs: np.ndarray, rng: np.random.Generator) -> str:
          last_fw],
     ]).astype(np.float32)
 
-    logits = _forward_policy(pol_in, *_unpack_policy(_pol_weights))
+    with torch.no_grad():
+        logits = _pol_model(torch.from_numpy(pol_in).unsqueeze(0)).squeeze(0).numpy()
     order  = np.argsort(-logits)
     best   = int(order[0])
 

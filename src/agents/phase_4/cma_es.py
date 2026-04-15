@@ -50,13 +50,12 @@ from typing import Optional
 
 import numpy as np
 import torch
+import torch.nn as nn
 import optuna
 
 from obelix import OBELIX
 
-# ---------------------------------------------------------------------------
 # Constants
-# ---------------------------------------------------------------------------
 ACTIONS = ["L45", "L22", "FW", "R22", "R45"]
 N_ACTIONS = len(ACTIONS)
 
@@ -71,13 +70,11 @@ N_PARAMS = (INPUT_DIM * HIDDEN1 + HIDDEN1 +
             HIDDEN1 * HIDDEN2 + HIDDEN2 +
             HIDDEN2 * OUTPUT_DIM + OUTPUT_DIM)  # 1477
 
-# ---------------------------------------------------------------------------
-# Globals (same pattern as phase_2 agents)
-# ---------------------------------------------------------------------------
+
 _CURRENT_LEVEL = 1
 _CURRENT_WALL = False
 _CURRENT_PREFIX: Optional[str] = None
-_WEIGHTS: Optional[np.ndarray] = None  # flat weight vector
+_MODEL: Optional[nn.Module] = None  # cached inference model
 
 # Inference state
 _last_action: Optional[int] = None
@@ -87,37 +84,34 @@ _CLOSE_Q_DELTA = 0.02
 _time_since_seen: int = 100
 _time_since_stuck: int = 100
 
-# ---------------------------------------------------------------------------
-# MLP helpers (pure numpy, no autograd)
-# ---------------------------------------------------------------------------
+class MLP(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(INPUT_DIM, HIDDEN1),
+            nn.Tanh(),
+            nn.Linear(HIDDEN1, HIDDEN2),
+            nn.Tanh(),
+            nn.Linear(HIDDEN2, OUTPUT_DIM),
+        )
 
-def _unpack_weights(flat: np.ndarray):
-    """Unpack a flat parameter vector into weight matrices and biases."""
+    def forward(self, x):
+        return self.net(x)
+
+
+def _flat_to_model(flat: np.ndarray) -> MLP:
+    """Load a flat CMA-ES parameter vector into an MLP (matches numpy packing order)."""
+    model = MLP()
     idx = 0
-    def take(shape):
-        nonlocal idx
-        size = 1
-        for s in shape:
-            size *= s
-        w = flat[idx : idx + size].reshape(shape)
-        idx += size
-        return w
-
-    W1 = take((INPUT_DIM, HIDDEN1))
-    b1 = take((HIDDEN1,))
-    W2 = take((HIDDEN1, HIDDEN2))
-    b2 = take((HIDDEN2,))
-    W3 = take((HIDDEN2, OUTPUT_DIM))
-    b3 = take((OUTPUT_DIM,))
-    return W1, b1, W2, b2, W3, b3
-
-
-def _forward(features: np.ndarray, W1, b1, W2, b2, W3, b3) -> np.ndarray:
-    """Forward pass through the MLP. Returns action logits (5-dim)."""
-    h1 = np.tanh(features @ W1 + b1)
-    h2 = np.tanh(h1 @ W2 + b2)
-    logits = h2 @ W3 + b3
-    return logits
+    for layer in [model.net[0], model.net[2], model.net[4]]:
+        n_w = layer.in_features * layer.out_features
+        W = flat[idx:idx + n_w].reshape(layer.in_features, layer.out_features)
+        layer.weight.data = torch.from_numpy(W.T.copy()).float()
+        idx += n_w
+        layer.bias.data = torch.from_numpy(flat[idx:idx + layer.out_features].copy()).float()
+        idx += layer.out_features
+    model.eval()
+    return model
 
 
 def _extract_features(obs: np.ndarray,
@@ -168,17 +162,12 @@ def _priv_shaping(env, prev_dist):
         r += 1.0
     return r, curr_dist
 
-
-# ---------------------------------------------------------------------------
-# Fitness evaluation (training only)
-# ---------------------------------------------------------------------------
-
 def _evaluate_genome(flat_weights: np.ndarray,
                      difficulty: int,
                      wall_obstacles: bool,
                      config: dict,
                      n_rollouts: int = 3) -> float:
-    W1, b1, W2, b2, W3, b3 = _unpack_weights(flat_weights)
+    model = _flat_to_model(flat_weights)
     seed = config["seed"]
     total_fitness = 0.0
     use_privileged = config.get("use_privileged", True)
@@ -226,7 +215,8 @@ def _evaluate_genome(flat_weights: np.ndarray,
                 ts_stuck += 1
 
             features = _extract_features(obs, ts_seen, ts_stuck, last_fw)
-            logits = _forward(features, W1, b1, W2, b2, W3, b3)
+            with torch.no_grad():
+                logits = model(torch.from_numpy(features).unsqueeze(0)).squeeze(0).numpy()
             act_idx = int(np.argmax(logits))
 
             obs, reward, done = env.step(ACTIONS[act_idx], render=False)
@@ -254,18 +244,13 @@ def _evaluate_genome(flat_weights: np.ndarray,
 
     return total_fitness / n_rollouts
 
-
-# ---------------------------------------------------------------------------
-# CMA-ES implementation (from scratch)
-# ---------------------------------------------------------------------------
-
 class CMAES:
-    """Minimal (μ/μ_w, λ)-CMA-ES."""
+    """Minimal (mu/mu_w, lambda)-CMA-ES."""
 
     def __init__(self, n: int, sigma0: float = 0.5, pop_size: int = 48,
                  seed: int = 42):
         self.n = n
-        self.lam = pop_size  # λ
+        self.lam = pop_size  # lambda
         self.mu = pop_size // 2  # number of parents
         self.rng = np.random.default_rng(seed)
 
@@ -289,7 +274,7 @@ class CMAES:
 
         # State
         self.mean = np.zeros(n, dtype=np.float64)
-        self.ps = np.zeros(n, dtype=np.float64)  # evolution path for σ
+        self.ps = np.zeros(n, dtype=np.float64)  # evolution path for sigma
         self.pc = np.zeros(n, dtype=np.float64)  # evolution path for C
 
         # We store C in factored form: C = B D^2 B^T
@@ -302,25 +287,25 @@ class CMAES:
         self._gen_since_eigen = 0
 
     def ask(self) -> np.ndarray:
-        """Sample λ candidate solutions."""
+        """Sample lambda candidate solutions."""
         z = self.rng.standard_normal((self.lam, self.n))
         # x_k = mean + sigma * B D z_k
         samples = self.mean[None, :] + self.sigma * (z @ np.diag(self.D) @ self.B.T)
         return samples
 
     def tell(self, solutions: np.ndarray, fitnesses: np.ndarray):
-        """Update CMA-ES state given evaluated solutions and fitnesses (higher = better)."""
+        """Update CMA-ES state given evaluated solutions and fitnesses"""
         n = self.n
 
-        # Sort by fitness (descending – we maximise)
+        # Sort by fitness
         order = np.argsort(-fitnesses)
         solutions = solutions[order]
 
-        # Weighted mean of top-μ
+        # Weighted mean of top-mu
         old_mean = self.mean.copy()
         self.mean = self.weights @ solutions[:self.mu]
 
-        # Evolution path for σ (CSA)
+        # Evolution path for sigma (CSA)
         mean_shift = (self.mean - old_mean) / self.sigma
         self.ps = (1.0 - self.cs) * self.ps + \
                   math.sqrt(self.cs * (2.0 - self.cs) * self.mu_eff) * (self.invsqrtC @ mean_shift)
@@ -334,7 +319,7 @@ class CMAES:
         self.pc = (1.0 - self.cc) * self.pc + \
                   h_sig * math.sqrt(self.cc * (2.0 - self.cc) * self.mu_eff) * mean_shift
 
-        # Rank-1 + rank-μ covariance update
+        # Rank-1 + rank-mu covariance update
         artmp = (solutions[:self.mu] - old_mean[None, :]) / self.sigma
         self.C = ((1.0 - self.c1 - self.cmu) * self.C +
                   self.c1 * (np.outer(self.pc, self.pc) +
@@ -345,35 +330,28 @@ class CMAES:
         self.sigma *= math.exp((self.cs / self.ds) *
                                (np.linalg.norm(self.ps) / self.chi_n - 1.0))
 
-        # Eigendecomposition (expensive, do periodically)
+        # Eigendecomposition
         self._gen_since_eigen += 1
         if self._gen_since_eigen >= self._eigen_update_gap:
             self._update_eigen()
             self._gen_since_eigen = 0
 
     def _update_eigen(self):
-        """Eigendecompose C to update B, D, invsqrtC."""
-        # Symmetrise
         self.C = np.triu(self.C) + np.triu(self.C, 1).T
         eigenvalues, self.B = np.linalg.eigh(self.C)
         eigenvalues = np.maximum(eigenvalues, 1e-20)
         self.D = np.sqrt(eigenvalues)
         self.invsqrtC = self.B @ np.diag(1.0 / self.D) @ self.B.T
 
-
-# ---------------------------------------------------------------------------
-# train() – follows the phase_2 workflow
-# ---------------------------------------------------------------------------
-
 def train(level: int, wall_obstacles: bool, episodes: int,
           config_file: str = None, render: bool = False,
           prefix: str = None, trial=None):
-    global _CURRENT_LEVEL, _CURRENT_WALL, _CURRENT_PREFIX, _WEIGHTS
+    global _CURRENT_LEVEL, _CURRENT_WALL, _CURRENT_PREFIX, _MODEL
 
     _CURRENT_LEVEL = level
     _CURRENT_WALL = wall_obstacles
     _CURRENT_PREFIX = prefix
-    _WEIGHTS = None
+    _MODEL = None
 
     print(f"Training CMA-ES for level {level} with wall_obstacles={wall_obstacles} "
           f"for {episodes} generations")
@@ -413,7 +391,6 @@ def train(level: int, wall_obstacles: bool, episodes: int,
 
         fitnesses = np.zeros(cma.lam)
         for i in range(cma.lam):
-            # Shift seed each generation so episodes are diverse
             eval_config = dict(config)
             eval_config["seed"] = seed + gen * cma.lam + i
             fitnesses[i] = _evaluate_genome(
@@ -430,7 +407,6 @@ def train(level: int, wall_obstacles: bool, episodes: int,
         gen_mean = float(np.mean(fitnesses))
         if gen_best > best_fitness:
             best_fitness = gen_best
-            # The best solution is now the first after sorting inside tell()
             best_genome = solutions[np.argmax(fitnesses)].copy()
 
         duration = time.time() - t_start
@@ -452,29 +428,24 @@ def train(level: int, wall_obstacles: bool, episodes: int,
                 if trial is not None
                 else f"models/{base_name}_weights.pth")
 
-    _WEIGHTS = best_genome.astype(np.float32)
-    torch.save(torch.from_numpy(_WEIGHTS), out_path)
+    torch.save(torch.from_numpy(best_genome.astype(np.float32)), out_path)
     print(f"Saved best genome ({N_PARAMS} params, fitness={best_fitness:.1f}) to {out_path}")
 
-
-# ---------------------------------------------------------------------------
-# _load_once() / policy() – follows the phase_2 workflow
-# ---------------------------------------------------------------------------
-
 def _load_once():
-    global _WEIGHTS
-    if _WEIGHTS is None:
+    global _MODEL
+    if _MODEL is None:
         base_name = (f"{_CURRENT_PREFIX}" if _CURRENT_PREFIX
                      else f"cma_es_level{_CURRENT_LEVEL}"
                           f"{'_wall' if _CURRENT_WALL else ''}")
         wpath = f"models/{base_name}_weights.pth"
-        _WEIGHTS = torch.load(wpath, map_location="cpu", weights_only=True).numpy()
-    return _WEIGHTS
+        flat = torch.load(wpath, map_location="cpu", weights_only=True).numpy()
+        _MODEL = _flat_to_model(flat)
+    return _MODEL
 
 
 def policy(obs: np.ndarray, rng: np.random.Generator) -> str:
     global _last_action, _repeat_count, _time_since_seen, _time_since_stuck
-    _load_once()
+    model = _load_once()
 
     # Update temporal memory
     if np.any(obs[:17] > 0):
@@ -489,8 +460,8 @@ def policy(obs: np.ndarray, rng: np.random.Generator) -> str:
     last_fw = 1.0 if (_last_action is not None and _last_action == 2) else 0.0
     features = _extract_features(obs, _time_since_seen, _time_since_stuck, last_fw)
 
-    W1, b1, W2, b2, W3, b3 = _unpack_weights(_WEIGHTS)
-    logits = _forward(features, W1, b1, W2, b2, W3, b3)
+    with torch.no_grad():
+        logits = model(torch.from_numpy(features).unsqueeze(0)).squeeze(0).numpy()
 
     order = np.argsort(-logits)
     best = int(order[0])
@@ -509,11 +480,6 @@ def policy(obs: np.ndarray, rng: np.random.Generator) -> str:
 
     _last_action = best
     return ACTIONS[best]
-
-
-# ---------------------------------------------------------------------------
-# Optuna hyperparameter interface
-# ---------------------------------------------------------------------------
 
 def get_optuna_params(trial, total_episodes):
     params = {}

@@ -13,9 +13,9 @@ ZIP layout:
 from __future__ import annotations
 from typing import Optional
 import os
-import math
 import numpy as np
 import torch
+import torch.nn as nn
 
 ACTIONS = ["L45", "L22", "FW", "R22", "R45"]
 
@@ -25,7 +25,7 @@ HIDDEN2    = 32
 OUTPUT_DIM = 5
 
 # Inference state
-_weights:         Optional[np.ndarray] = None
+_MODEL:           Optional[nn.Module] = None
 _last_action:     Optional[int] = None
 _repeat_count:    int = 0
 _time_since_seen: int = 100
@@ -35,29 +35,34 @@ _MAX_REPEAT    = 3
 _CLOSE_Q_DELTA = 0.02
 
 
-def _unpack_weights(flat):
+class MLP(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(INPUT_DIM, HIDDEN1),
+            nn.Tanh(),
+            nn.Linear(HIDDEN1, HIDDEN2),
+            nn.Tanh(),
+            nn.Linear(HIDDEN2, OUTPUT_DIM),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+def _flat_to_model(flat: np.ndarray) -> MLP:
+    """Load a flat CMA-ES parameter vector into an MLP (matches numpy packing order)."""
+    model = MLP()
     idx = 0
-    def take(shape):
-        nonlocal idx
-        size = 1
-        for s in shape:
-            size *= s
-        w = flat[idx:idx + size].reshape(shape)
-        idx += size
-        return w
-    W1 = take((INPUT_DIM, HIDDEN1))
-    b1 = take((HIDDEN1,))
-    W2 = take((HIDDEN1, HIDDEN2))
-    b2 = take((HIDDEN2,))
-    W3 = take((HIDDEN2, OUTPUT_DIM))
-    b3 = take((OUTPUT_DIM,))
-    return W1, b1, W2, b2, W3, b3
-
-
-def _forward(features, W1, b1, W2, b2, W3, b3):
-    h1 = np.tanh(features @ W1 + b1)
-    h2 = np.tanh(h1 @ W2 + b2)
-    return h2 @ W3 + b3
+    for layer in [model.net[0], model.net[2], model.net[4]]:
+        n_w = layer.in_features * layer.out_features
+        W = flat[idx:idx + n_w].reshape(layer.in_features, layer.out_features)
+        layer.weight.data = torch.from_numpy(W.T.copy()).float()
+        idx += n_w
+        layer.bias.data = torch.from_numpy(flat[idx:idx + layer.out_features].copy()).float()
+        idx += layer.out_features
+    model.eval()
+    return model
 
 
 def _extract_features(obs, time_since_seen, time_since_stuck, last_fw):
@@ -75,8 +80,8 @@ def _extract_features(obs, time_since_seen, time_since_stuck, last_fw):
 
 
 def _load_once():
-    global _weights
-    if _weights is not None:
+    global _MODEL
+    if _MODEL is not None:
         return
     here  = os.path.dirname(__file__)
     wpath = os.path.join(here, "weights.pth")
@@ -85,7 +90,8 @@ def _load_once():
             "weights.pth not found next to agent.py. "
             "Train with curriculum_cma and copy the output weights here."
         )
-    _weights = torch.load(wpath, map_location="cpu", weights_only=True).numpy()
+    flat = torch.load(wpath, map_location="cpu", weights_only=True).numpy()
+    _MODEL = _flat_to_model(flat)
 
 
 def policy(obs: np.ndarray, rng: np.random.Generator) -> str:
@@ -97,9 +103,12 @@ def policy(obs: np.ndarray, rng: np.random.Generator) -> str:
 
     last_fw  = 1.0 if (_last_action is not None and _last_action == 2) else 0.0
     features = _extract_features(obs, _time_since_seen, _time_since_stuck, last_fw)
-    logits   = _forward(features, *_unpack_weights(_weights))
-    order    = np.argsort(-logits)
-    best     = int(order[0])
+
+    with torch.no_grad():
+        logits = _MODEL(torch.from_numpy(features).unsqueeze(0)).squeeze(0).numpy()
+
+    order = np.argsort(-logits)
+    best  = int(order[0])
 
     if _last_action is not None:
         if (logits[order[0]] - logits[order[1]]) < _CLOSE_Q_DELTA:

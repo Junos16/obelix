@@ -63,7 +63,7 @@ N_PARAMS = INPUT_DIM * HIDDEN1 + HIDDEN1 + HIDDEN1 * HIDDEN2 + HIDDEN2 + HIDDEN2
 _CURRENT_LEVEL = 1
 _CURRENT_WALL = False
 _CURRENT_PREFIX: Optional[str] = None
-_WEIGHTS: Optional[np.ndarray] = None
+_MODEL: Optional[nn.Module] = None
 
 _last_action: Optional[int] = None
 _repeat_count: int = 0
@@ -134,33 +134,22 @@ def _net_to_flat(net: BCNet) -> np.ndarray:
     return torch.cat([p.data.flatten() for p in net.parameters()]).numpy()
 
 
-# Numpy forward pass for CMA-ES
-def _unpack_weights(flat: np.ndarray):
+def _flat_to_model(flat: np.ndarray) -> BCNet:
+    model = BCNet()
     idx = 0
-    def take(shape):
-        nonlocal idx
-        size = 1
-        for s in shape: size *= s
-        w = flat[idx:idx + size].reshape(shape)
-        idx += size
-        return w
-    W1 = take((INPUT_DIM, HIDDEN1))
-    b1 = take((HIDDEN1,))
-    W2 = take((HIDDEN1, HIDDEN2))
-    b2 = take((HIDDEN2,))
-    W3 = take((HIDDEN2, OUTPUT_DIM))
-    b3 = take((OUTPUT_DIM,))
-    return W1, b1, W2, b2, W3, b3
-
-
-def _forward(features: np.ndarray, W1, b1, W2, b2, W3, b3) -> np.ndarray:
-    h1 = np.tanh(features @ W1 + b1)
-    h2 = np.tanh(h1 @ W2 + b2)
-    return h2 @ W3 + b3
+    for layer in [model.l1, model.l2, model.l3]:
+        n_w = layer.in_features * layer.out_features
+        W = flat[idx:idx + n_w].reshape(layer.in_features, layer.out_features)
+        layer.weight.data = torch.from_numpy(W.T.copy()).float()
+        idx += n_w
+        layer.bias.data = torch.from_numpy(flat[idx:idx + layer.out_features].copy()).float()
+        idx += layer.out_features
+    model.eval()
+    return model
 
 
 def _evaluate_genome(flat_weights, difficulty, wall_obstacles, config, n_rollouts=3):
-    W1, b1, W2, b2, W3, b3 = _unpack_weights(flat_weights)
+    model = _flat_to_model(flat_weights)
     seed = config["seed"]
     total_fitness = 0.0
     use_priv = config.get("use_privileged", True)
@@ -200,7 +189,8 @@ def _evaluate_genome(flat_weights, difficulty, wall_obstacles, config, n_rollout
                 ts_stuck += 1
 
             features = _extract_features(obs, ts_seen, ts_stuck, last_fw)
-            logits = _forward(features, W1, b1, W2, b2, W3, b3)
+            with torch.no_grad():
+                logits = model(torch.from_numpy(features).unsqueeze(0)).squeeze(0).numpy()
             act_idx = int(np.argmax(logits))
 
             obs, reward, done = env.step(ACTIONS[act_idx], render=False)
@@ -343,12 +333,12 @@ def _bc_pretrain(config):
 
 
 def train(level, wall_obstacles, episodes, config_file=None, render=False, prefix=None, trial=None):
-    global _CURRENT_LEVEL, _CURRENT_WALL, _CURRENT_PREFIX, _WEIGHTS
+    global _CURRENT_LEVEL, _CURRENT_WALL, _CURRENT_PREFIX, _MODEL
 
     _CURRENT_LEVEL = level
     _CURRENT_WALL = wall_obstacles
     _CURRENT_PREFIX = prefix
-    _WEIGHTS = None
+    _MODEL = None
 
     difficulty = {1: 0, 2: 2, 3: 3}[level]
 
@@ -432,19 +422,21 @@ def train(level, wall_obstacles, episodes, config_file=None, render=False, prefi
                 if trial is not None
                 else f"models/{base_name}_weights.pth")
 
-    _WEIGHTS = best_genome.astype(np.float32)
-    torch.save(torch.from_numpy(_WEIGHTS), out_path)
+    best_f32 = best_genome.astype(np.float32)
+    _MODEL = _flat_to_model(best_f32)
+    torch.save(torch.from_numpy(best_f32), out_path)
     print(f"Saved best genome ({N_PARAMS} params, fitness={best_fitness:.1f}) to {out_path}")
 
 
 def _load_once():
-    global _WEIGHTS
-    if _WEIGHTS is not None:
+    global _MODEL
+    if _MODEL is not None:
         return
     base_name = (f"{_CURRENT_PREFIX}" if _CURRENT_PREFIX
                  else f"bc_cma_level{_CURRENT_LEVEL}{'_wall' if _CURRENT_WALL else ''}")
     wpath = f"models/{base_name}_weights.pth"
-    _WEIGHTS = torch.load(wpath, map_location="cpu", weights_only=True).numpy()
+    flat = torch.load(wpath, map_location="cpu", weights_only=True).numpy()
+    _MODEL = _flat_to_model(flat)
 
 
 def policy(obs: np.ndarray, rng: np.random.Generator) -> str:
@@ -463,8 +455,8 @@ def policy(obs: np.ndarray, rng: np.random.Generator) -> str:
     last_fw = 1.0 if (_last_action is not None and _last_action == 2) else 0.0
     features = _extract_features(obs, _time_since_seen, _time_since_stuck, last_fw)
 
-    W1, b1, W2, b2, W3, b3 = _unpack_weights(_WEIGHTS)
-    logits = _forward(features, W1, b1, W2, b2, W3, b3)
+    with torch.no_grad():
+        logits = _MODEL(torch.from_numpy(features).unsqueeze(0)).squeeze(0).numpy()
 
     order = np.argsort(-logits)
     best = int(order[0])

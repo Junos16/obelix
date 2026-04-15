@@ -58,7 +58,7 @@ _CURRENT_LEVEL = 1
 _CURRENT_WALL = False
 _CURRENT_PREFIX: Optional[str] = None
 _encoder = None
-_policy_weights: Optional[np.ndarray] = None
+_pol_model: Optional[nn.Module] = None
 _obs_window = None
 _ts_seen = 100
 _ts_stuck = 100
@@ -152,28 +152,33 @@ class EncoderNet(nn.Module):
         return self.net(x)
 
 
-def _unpack_policy(flat):
+class PolicyNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(SP_INPUT, SP_H1),
+            nn.Tanh(),
+            nn.Linear(SP_H1, SP_H2),
+            nn.Tanh(),
+            nn.Linear(SP_H2, SP_OUTPUT),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+def _flat_to_policy(flat: np.ndarray) -> PolicyNet:
+    model = PolicyNet()
     idx = 0
-    def take(shape):
-        nonlocal idx
-        size = 1
-        for s in shape: size *= s
-        w = flat[idx:idx+size].reshape(shape)
-        idx += size
-        return w
-    W1 = take((SP_INPUT, SP_H1))
-    b1 = take((SP_H1,))
-    W2 = take((SP_H1, SP_H2))
-    b2 = take((SP_H2,))
-    W3 = take((SP_H2, SP_OUTPUT))
-    b3 = take((SP_OUTPUT,))
-    return W1, b1, W2, b2, W3, b3
-
-
-def _forward_policy(features, W1, b1, W2, b2, W3, b3):
-    h1 = np.tanh(features @ W1 + b1)
-    h2 = np.tanh(h1 @ W2 + b2)
-    return h2 @ W3 + b3
+    for layer in [model.net[0], model.net[2], model.net[4]]:
+        n_w = layer.in_features * layer.out_features
+        W = flat[idx:idx + n_w].reshape(layer.in_features, layer.out_features)
+        layer.weight.data = torch.from_numpy(W.T.copy()).float()
+        idx += n_w
+        layer.bias.data = torch.from_numpy(flat[idx:idx + layer.out_features].copy()).float()
+        idx += layer.out_features
+    model.eval()
+    return model
 
 
 class CMAES:
@@ -256,7 +261,7 @@ class CMAES:
 
 
 def _evaluate_genome(flat_weights, encoder, difficulty, wall_obstacles, config, n_rollouts=3, use_privileged=True):
-    W1, b1, W2, b2, W3, b3 = _unpack_policy(flat_weights)
+    pol_model = _flat_to_policy(flat_weights)
     seed = config["seed"]
     total_fitness = 0.0
 
@@ -299,7 +304,8 @@ def _evaluate_genome(flat_weights, encoder, difficulty, wall_obstacles, config, 
             with torch.no_grad():
                 belief = encoder(torch.tensor(enc_input).unsqueeze(0)).squeeze(0).numpy()
             policy_input = _make_policy_input(belief, ts_seen, ts_stuck, last_fw)
-            logits = _forward_policy(policy_input, W1, b1, W2, b2, W3, b3)
+            with torch.no_grad():
+                logits = pol_model(torch.from_numpy(policy_input).unsqueeze(0)).squeeze(0).numpy()
             act_idx = int(np.argmax(logits))
 
             obs, raw, done = env.step(ACTIONS[act_idx], render=False)
@@ -332,7 +338,7 @@ def _evaluate_genome(flat_weights, encoder, difficulty, wall_obstacles, config, 
 
 def train(level: int, wall_obstacles: bool, episodes: int,
           config_file=None, render: bool = False, prefix=None, trial=None):
-    global _CURRENT_LEVEL, _CURRENT_WALL, _CURRENT_PREFIX, _encoder, _policy_weights
+    global _CURRENT_LEVEL, _CURRENT_WALL, _CURRENT_PREFIX, _encoder, _pol_model
 
     _CURRENT_LEVEL = level
     _CURRENT_WALL = wall_obstacles
@@ -428,14 +434,14 @@ def train(level: int, wall_obstacles: bool, episodes: int,
     best_genome_f32 = best_genome.astype(np.float32)
     torch.save({"encoder": encoder.state_dict(),
                 "policy": torch.from_numpy(best_genome_f32)}, out_path)
-    _policy_weights = best_genome_f32
+    _pol_model = _flat_to_policy(best_genome_f32)
     _encoder = encoder
     print(f"Saved to {out_path} (fitness={best_fitness:.1f})")
 
 
 def _load_once():
-    global _encoder, _policy_weights, _obs_window
-    if _encoder is not None and _policy_weights is not None:
+    global _encoder, _pol_model, _obs_window
+    if _encoder is not None and _pol_model is not None:
         return
     wall_tag = "_wall" if _CURRENT_WALL else ""
     base = f"{_CURRENT_PREFIX}" if _CURRENT_PREFIX else f"sp_cma_level{_CURRENT_LEVEL}{wall_tag}"
@@ -447,7 +453,7 @@ def _load_once():
     enc.load_state_dict(d["encoder"])
     enc.eval()
     _encoder = enc
-    _policy_weights = d["policy"].numpy()
+    _pol_model = _flat_to_policy(d["policy"].numpy())
     _obs_window = deque([np.zeros(OBS_DIM, dtype=np.float32)] * WINDOW, maxlen=WINDOW)
 
 
@@ -474,8 +480,8 @@ def policy(obs: np.ndarray, rng: np.random.Generator) -> str:
         belief = _encoder(torch.tensor(enc_input).unsqueeze(0)).squeeze(0).numpy()
     policy_input = _make_policy_input(belief, _ts_seen, _ts_stuck, _last_fw)
 
-    W1, b1, W2, b2, W3, b3 = _unpack_policy(_policy_weights)
-    logits = _forward_policy(policy_input, W1, b1, W2, b2, W3, b3)
+    with torch.no_grad():
+        logits = _pol_model(torch.from_numpy(policy_input).unsqueeze(0)).squeeze(0).numpy()
 
     order = np.argsort(-logits)
     best = int(order[0])
