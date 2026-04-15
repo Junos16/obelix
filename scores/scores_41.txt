@@ -1,0 +1,5 @@
+cumulative_reward_with_wall: -356979.700
+std_cumulative_reward_with_wall: 116175.438
+cumulative_reward_no_wall: 1159.800
+std_cumulative_reward_no_wall: 1929.716
+weighted_cumulative_reward: -213723.900

@@ -1,0 +1,17 @@
+cumulative_reward_wall_True_difficulty_0: -41341.100
+std_cumulative_reward_wall_True_difficulty_0: 118077.967
+cumulative_reward_wall_True_difficulty_2: -41338.700
+std_cumulative_reward_wall_True_difficulty_2: 118078.767
+cumulative_reward_wall_True_difficulty_3: -80801.800
+std_cumulative_reward_wall_True_difficulty_3: 130883.290
+cumulative_reward_with_wall: -54493.867
+std_cumulative_reward_with_wall: 123899.957
+cumulative_reward_wall_False_difficulty_0: -1989.600
+std_cumulative_reward_wall_False_difficulty_0: 10.500
+cumulative_reward_wall_False_difficulty_2: -1985.600
+std_cumulative_reward_wall_False_difficulty_2: 14.507
+cumulative_reward_wall_False_difficulty_3: -1476.700
+std_cumulative_reward_wall_False_difficulty_3: 1196.243
+cumulative_reward_no_wall: -1817.300
+std_cumulative_reward_no_wall: 731.514
+weighted_cumulative_reward: -33423.240
